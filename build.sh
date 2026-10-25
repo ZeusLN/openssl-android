@@ -42,7 +42,10 @@ if [ "$1" = "--inside" ]; then
     NDK=${ANDROID_HOME:-/opt/android}/ndk/$NDK_VERSION
     if [ ! -d "$NDK" ]; then
         # The same install the app build's Gradle would do
-        yes | "${ANDROID_HOME:-/opt/android}"/cmdline-tools/latest/bin/sdkmanager "ndk;$NDK_VERSION" > /dev/null
+        # (yes || true): yes dies of SIGPIPE when sdkmanager exits, which
+        # pipefail would report as a failure. A failed install is caught by
+        # the directory check below.
+        { yes || true; } | "${ANDROID_HOME:-/opt/android}"/cmdline-tools/latest/bin/sdkmanager "ndk;$NDK_VERSION" > /dev/null
     fi
 else
     SRC=$HERE
