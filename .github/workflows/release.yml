@@ -1,0 +1,77 @@
+name: Build and release
+
+# Every push and pull request builds the AAR twice on separate runners and
+# fails if the two differ. A tag v<OpenSSL version>-zeus<n> also publishes
+# the AAR and its sha256 as a release.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        run: [a, b]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build
+        run: ./build.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aar-${{ matrix.run }}
+          path: out/
+          if-no-files-found: error
+
+  compare:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: aar-a
+          path: a
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: aar-b
+          path: b
+      - name: Both builds must be identical
+        run: |
+          cat a/*.sha256 b/*.sha256
+          cmp a/*.aar b/*.aar
+
+  release:
+    needs: compare
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: aar-a
+          path: out
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^AAR_VERSION=\$OPENSSL_VERSION-//p' build.sh)
+          openssl=$(sed -n 's/^OPENSSL_VERSION=//p' build.sh)
+          expected="v$openssl-$version"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match build.sh ($expected)" >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" out/*.aar out/*.sha256 \
+            --title "OpenSSL $openssl for Android ($version)" \
+            --notes "sha256: $(cut -d' ' -f1 out/*.sha256)
+
+          Built twice on separate runners by this workflow; the builds were identical. To check it yourself, run ./build.sh at this tag and compare the hash."
